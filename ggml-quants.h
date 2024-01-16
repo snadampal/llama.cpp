@@ -247,6 +247,8 @@ void ggml_vec_dot_iq2_xs_q8_K (int n, float * restrict s, const void * restrict 
 // mmla
 void ggml_vec_mmla_q8_0_q8_0(const int n, float * restrict s0, float * restrict s1, const void * restrict vx0, const void * restrict vx1,
                                const void * restrict vy0, const void * restrict vy1);
+void ggml_vec_mmla_q4_0_q8_0(const int n, float * restrict s0, float * restrict s1, const void * restrict vx0, const void * restrict vx1,
+                               const void * restrict vy0, const void * restrict vy1);
 #endif
 
 //
