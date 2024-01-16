@@ -243,6 +243,12 @@ void ggml_vec_dot_q6_K_q8_K(int n, float * restrict s, const void * restrict vx,
 void ggml_vec_dot_iq2_xxs_q8_K(int n, float * restrict s, const void * restrict vx, const void * restrict vy);
 void ggml_vec_dot_iq2_xs_q8_K (int n, float * restrict s, const void * restrict vx, const void * restrict vy);
 
+#if defined(__ARM_FEATURE_MATMUL_INT8)
+// mmla
+void ggml_vec_mmla_q8_0_q8_0(const int n, float * restrict s0, float * restrict s1, const void * restrict vx0, const void * restrict vx1,
+                               const void * restrict vy0, const void * restrict vy1);
+#endif
+
 //
 // Quantization utilizing an importance matrix (a.k.a. "Activation aWare Quantization")
 //

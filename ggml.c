@@ -514,6 +514,9 @@ static const ggml_type_traits_t type_traits[GGML_TYPE_COUNT] = {
         .from_float_reference     = (ggml_from_float_t) quantize_row_q8_0_reference,
         .vec_dot                  = ggml_vec_dot_q8_0_q8_0,
         .vec_dot_type             = GGML_TYPE_Q8_0,
+#if defined(__ARM_FEATURE_MATMUL_INT8)
+        .vec_mmla                 = ggml_vec_mmla_q8_0_q8_0,
+#endif
     },
     [GGML_TYPE_Q8_1] = {
         .type_name                = "q8_1",
@@ -9801,6 +9804,9 @@ static void ggml_compute_forward_mul_mat(
     ggml_vec_dot_t    const vec_dot               = type_traits[type].vec_dot;
     enum ggml_type    const vec_dot_type          = type_traits[type].vec_dot_type;
     ggml_from_float_t const from_float_to_vec_dot = type_traits[vec_dot_type].from_float;
+#if defined(__ARM_FEATURE_MATMUL_INT8)
+    ggml_vec_mmla_t   const vec_mmla              = type_traits[type].vec_mmla;
+#endif
 
     GGML_ASSERT(ne0 == ne01);
     GGML_ASSERT(ne1 == ne11);
@@ -9952,43 +9958,107 @@ static void ggml_compute_forward_mul_mat(
 
     // attempt to reduce false-sharing (does not seem to make a difference)
     float tmp[16];
+#if defined(__ARM_FEATURE_MATMUL_INT8)
+    float tmp1[16];
+    float tmp2[16];
 
-    for (int64_t iir1 = ir110; iir1 < ir111; iir1 += blck_1) {
-        for (int64_t iir0 = ir010; iir0 < ir011; iir0 += blck_0) {
-            for (int64_t ir1 = iir1; ir1 < iir1 + blck_1 && ir1 < ir111; ++ir1) {
-                const int64_t i13 = (ir1/(ne12*ne1));
-                const int64_t i12 = (ir1 - i13*ne12*ne1)/ne1;
-                const int64_t i11 = (ir1 - i13*ne12*ne1 - i12*ne1);
+    if ((vec_mmla != NULL) && (nr0 % 2 == 0) && (nr1 %2 == 0)) {
+        for (int64_t iir1 = ir110; iir1 < ir111; iir1 += blck_1) {
+            for (int64_t iir0 = ir010; iir0 < ir011; iir0 += blck_0) {
+                for (int64_t ir1 = iir1; ir1 < iir1 + blck_1 && ir1 < ir111; ir1 += 2) {
+                    const int64_t i13 = (ir1/(ne12*ne11));
+                    const int64_t i12 = (ir1 - i13*ne12*ne11)/ne11;
+                    const int64_t i11 = (ir1 - i13*ne12*ne11 - i12*ne11);
 
-                // broadcast src0 into src1
-                const int64_t i03 = i13/r3;
-                const int64_t i02 = i12/r2;
+                    // broadcast src0 into src1
+                    const int64_t i03 = i13/r3;
+                    const int64_t i02 = i12/r2;
 
-                const int64_t i1 = i11;
-                const int64_t i2 = i12;
-                const int64_t i3 = i13;
+                    const int64_t i1 = i11;
+                    const int64_t i2 = i12;
+                    const int64_t i3 = i13;
 
-                const char * src0_row = (const char *) src0->data + (0 + i02*nb02 + i03*nb03);
+                    const int64_t i13_ = ((ir1+1)/(ne12*ne11));
+                    const int64_t i12_ = ((ir1+1) - (i13_)*ne12*ne11)/ne11;
+                    const int64_t i11_ = ((ir1+1) - (i13_)*ne12*ne11 - (i12_)*ne11);
 
-                // desc: when src1 is not a contiguous memory block we have to calculate the offset using the strides
-                //       if it is, then we have either copied the data to params->wdata and made it contiguous or we are using
-                //       the original src1 data pointer, so we should index using the indices directly
-                // TODO: this is a bit of a hack, we should probably have a better way to handle this
-                const char * src1_col = (const char *) wdata +
-                    (src1_cont || src1->type != vec_dot_type
-                     ? (i11      + i12*ne11 + i13*ne12*ne11)*row_size
-                     : (i11*nb11 + i12*nb12 + i13*nb13));
+                    // broadcast src0 into src1
+                    const int64_t i03_ = i13_/r3;
+                    const int64_t i02_ = i12_/r2;
 
-                float * dst_col = (float *) ((char *) dst->data + (i1*nb1 + i2*nb2 + i3*nb3));
+                    const int64_t i1_ = i11_;
+                    const int64_t i2_ = i12_;
+                    const int64_t i3_ = i13_;
 
-                //for (int64_t ir0 = iir0; ir0 < iir0 + blck_0 && ir0 < ir011; ++ir0) {
-                //    vec_dot(ne00, &dst_col[ir0], src0_row + ir0*nb01, src1_col);
-                //}
+                    const char * src0_row = (const char *) src0->data + (0 + i02*nb02 + i03*nb03);
 
-                for (int64_t ir0 = iir0; ir0 < iir0 + blck_0 && ir0 < ir011; ++ir0) {
-                    vec_dot(ne00, &tmp[ir0 - iir0], src0_row + ir0*nb01, src1_col);
+                    // desc: when src1 is not a contiguous memory block we have to calculate the offset using the strides
+                    //       if it is, then we have either copied the data to params->wdata and made it contiguous or we are using
+                    //       the original src1 data pointer, so we should index using the indices directly
+                    // TODO: this is a bit of a hack, we should probably have a better way to handle this
+                    const char * src1_col = (const char *) wdata +
+                        (src1_cont || src1->type != vec_dot_type
+                        ? (i11      + i12*ne11 + i13*ne12*ne11)*row_size
+                        : (i11*nb11 + i12*nb12 + i13*nb13));
+
+                    const char * src1_col_ = (const char *) wdata +
+                        (src1_cont || src1->type != vec_dot_type
+                         ? ((i11_)      + (i12_)*ne11 + (i13_)*ne12*ne11)*row_size
+                         : ((i11_)*nb11 + (i12_)*nb12 + (i13_)*nb13));
+
+                    float * dst_col = (float *) ((char *) dst->data + (i1*nb1 + i2*nb2 + i3*nb3));
+                    float * dst_col_ = (float *) ((char *) dst->data + ((i1_)*nb1 + (i2_)*nb2 + (i3_)*nb3));
+
+                    for (int64_t ir0 = iir0; ir0 < iir0 + blck_0 && ir0 < ir011; ir0 += 2) {
+                        vec_mmla(ne00, &tmp1[ir0 - iir0], &tmp2[ir0 - iir0], src0_row + ir0*nb01,
+                                 src0_row + (ir0+1)*nb01, src1_col, src1_col_);
+                    }
+
+                    memcpy(&dst_col[iir0], tmp1, (MIN(iir0 + blck_0, ir011) - iir0)*sizeof(float));
+                    memcpy(&dst_col_[iir0], tmp2, (MIN(iir0 + blck_0, ir011) - iir0)*sizeof(float));
                 }
-                memcpy(&dst_col[iir0], tmp, (MIN(iir0 + blck_0, ir011) - iir0)*sizeof(float));
+             }
+        }
+    } else
+#endif
+    {
+        for (int64_t iir1 = ir110; iir1 < ir111; iir1 += blck_1) {
+            for (int64_t iir0 = ir010; iir0 < ir011; iir0 += blck_0) {
+                for (int64_t ir1 = iir1; ir1 < iir1 + blck_1 && ir1 < ir111; ++ir1) {
+                    const int64_t i13 = (ir1/(ne12*ne1));
+                    const int64_t i12 = (ir1 - i13*ne12*ne1)/ne1;
+                    const int64_t i11 = (ir1 - i13*ne12*ne1 - i12*ne1);
+
+                    // broadcast src0 into src1
+                    const int64_t i03 = i13/r3;
+                    const int64_t i02 = i12/r2;
+
+                    const int64_t i1 = i11;
+                    const int64_t i2 = i12;
+                    const int64_t i3 = i13;
+
+                    const char * src0_row = (const char *) src0->data + (0 + i02*nb02 + i03*nb03);
+
+                    // desc: when src1 is not a contiguous memory block we have to calculate the offset using the strides
+                    //       if it is, then we have either copied the data to params->wdata and made it contiguous or we are using
+                    //       the original src1 data pointer, so we should index using the indices directly
+                    // TODO: this is a bit of a hack, we should probably have a better way to handle this
+                    const char * src1_col = (const char *) wdata +
+                        (src1_cont || src1->type != vec_dot_type
+                        ? (i11      + i12*ne11 + i13*ne12*ne11)*row_size
+                        : (i11*nb11 + i12*nb12 + i13*nb13));
+
+                    float * dst_col = (float *) ((char *) dst->data + (i1*nb1 + i2*nb2 + i3*nb3));
+
+                    //for (int64_t ir0 = iir0; ir0 < iir0 + blck_0 && ir0 < ir011; ++ir0) {
+                    //    vec_dot(ne00, &dst_col[ir0], src0_row + ir0*nb01, src1_col);
+                    //}
+
+                    for (int64_t ir0 = iir0; ir0 < iir0 + blck_0 && ir0 < ir011; ++ir0) {
+                        vec_dot(ne00, &tmp[ir0 - iir0], src0_row + ir0*nb01, src1_col);
+                    }
+                    memcpy(&dst_col[iir0], tmp, (MIN(iir0 + blck_0, ir011) - iir0)*sizeof(float));
+                }
             }
         }
     }
@@ -19959,6 +20029,14 @@ int ggml_cpu_has_neon(void) {
 
 int ggml_cpu_has_arm_fma(void) {
 #if defined(__ARM_FEATURE_FMA)
+    return 1;
+#else
+    return 0;
+#endif
+}
+
+int ggml_cpu_has_neon_matmul_int8(void) {
+#if defined(__ARM_FEATURE_MATMUL_INT8)
     return 1;
 #else
     return 0;

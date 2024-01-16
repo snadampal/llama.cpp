@@ -2217,6 +2217,7 @@ extern "C" {
     GGML_API int ggml_cpu_has_fma        (void);
     GGML_API int ggml_cpu_has_neon       (void);
     GGML_API int ggml_cpu_has_arm_fma    (void);
+    GGML_API int ggml_cpu_has_neon_matmul_int8  (void);
     GGML_API int ggml_cpu_has_metal      (void);
     GGML_API int ggml_cpu_has_f16c       (void);
     GGML_API int ggml_cpu_has_fp16_va    (void);
@@ -2242,6 +2243,10 @@ extern "C" {
     typedef void (*ggml_to_float_t)  (const void  * GGML_RESTRICT x, float * GGML_RESTRICT y, int k);
     typedef void (*ggml_from_float_t)(const float * GGML_RESTRICT x, void  * GGML_RESTRICT y, int k);
     typedef void (*ggml_vec_dot_t)   (const int n, float * GGML_RESTRICT s, const void * GGML_RESTRICT x, const void * GGML_RESTRICT y);
+#if defined(__ARM_FEATURE_MATMUL_INT8)
+    typedef void (*ggml_vec_mmla_t)  (const int n, float * GGML_RESTRICT s0, float * GGML_RESTRICT s1, const void * GGML_RESTRICT x0,
+                                      const void * GGML_RESTRICT x1, const void * GGML_RESTRICT y0, const void * GGML_RESTRICT y1);
+#endif
 
     typedef struct {
         const char      * type_name;
@@ -2253,6 +2258,9 @@ extern "C" {
         ggml_from_float_t from_float_reference;
         ggml_vec_dot_t    vec_dot;
         enum ggml_type    vec_dot_type;
+#if defined(__ARM_FEATURE_MATMUL_INT8)
+        ggml_vec_mmla_t   vec_mmla;
+#endif
     } ggml_type_traits_t;
 
     GGML_API ggml_type_traits_t ggml_internal_get_type_traits(enum ggml_type type);
