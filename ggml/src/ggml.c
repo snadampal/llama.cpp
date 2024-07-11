@@ -22032,4 +22032,12 @@ int ggml_cpu_has_matmul_int8(void) {
 #endif
 }
 
+int ggml_cpu_has_arm_bf16(void) {
+#if defined(__ARM_FEATURE_BF16_VECTOR_ARITHMETIC)
+    return 1;
+#else
+    return 0;
+#endif
+}
+
 ////////////////////////////////////////////////////////////////////////////////
